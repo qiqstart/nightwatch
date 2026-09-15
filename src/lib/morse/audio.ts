@@ -206,9 +206,13 @@ function detune(id: string): number {
   return (Math.abs(h) % 17) - 8;
 }
 
-let singleton: RadioAudio | null = null;
+const radios = new Map<string, RadioAudio>();
 
-export function getRadio(): RadioAudio {
-  singleton ??= new RadioAudio();
-  return singleton;
+export function getRadio(id = "main"): RadioAudio {
+  let radio = radios.get(id);
+  if (!radio) {
+    radio = new RadioAudio();
+    radios.set(id, radio);
+  }
+  return radio;
 }

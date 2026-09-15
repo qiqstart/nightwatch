@@ -1,6 +1,8 @@
 export { P2PRoom, defaultIceServers } from "./p2p";
 export { useP2PRoom } from "./use-p2p-room";
+export { useEther } from "./ether";
 export type { UseP2PRoomOptions, P2PRoomHandle } from "./use-p2p-room";
+export type { EtherPeer, CwMark, KeyWire } from "./ether";
 export type {
   PeerInfo,
   P2PRoomOptions,

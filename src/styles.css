@@ -64,6 +64,23 @@
     env(safe-area-inset-left);
 }
 
+.bench-split {
+  place-items: stretch;
+  grid-template-rows: 1fr 1fr;
+  gap: 0.4rem;
+  padding: 0.35rem;
+  padding-top: max(0.35rem, env(safe-area-inset-top));
+  padding-bottom: max(0.35rem, env(safe-area-inset-bottom));
+}
+
+.bench-split .radio {
+  width: 100%;
+  height: auto;
+  max-height: none;
+  min-height: 0;
+  overflow: hidden;
+}
+
 .radio {
   width: min(100%, 28rem);
   height: 100dvh;
@@ -94,6 +111,29 @@
   border: 1px solid rgb(176 141 87 / 0.18);
   border-radius: 1.15rem;
   pointer-events: none;
+}
+
+.radio.is-compact {
+  gap: 0.28rem;
+  padding: 0.45rem 0.6rem 0.4rem;
+}
+
+.radio.is-compact .knob-deck-sm,
+.radio.is-compact .wordmark-kicker {
+  display: none;
+}
+
+.radio.is-compact .crt-freq span {
+  font-size: 1.55rem;
+}
+
+.radio.is-compact .tape {
+  min-height: 2.2rem;
+}
+
+.radio.is-armed::before {
+  border-color: rgb(230 184 77 / 0.55);
+  box-shadow: inset 0 0 12px rgb(230 184 77 / 0.12);
 }
 
 @media (min-width: 640px) {
@@ -259,6 +299,13 @@
   animation: warmup 700ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
+.crt.is-rx .crt-glass {
+  box-shadow:
+    inset 0 0 0 1px rgb(62 207 122 / 0.45),
+    inset 0 12px 28px rgb(62 207 122 / 0.12),
+    0 0 18px rgb(62 207 122 / 0.18);
+}
+
 @keyframes warmup {
   from {
     filter: brightness(0.2);
@@ -372,6 +419,11 @@
 .jewel-net.is-on::before {
   background: var(--color-lamp-rx);
   box-shadow: 0 0 8px var(--color-lamp-rx);
+}
+
+.jewel-sky.is-on::before {
+  background: var(--color-phosphor);
+  box-shadow: 0 0 8px var(--color-phosphor);
 }
 
 .knob-deck {
@@ -683,6 +735,7 @@
   z-index: 1;
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 0.65rem;
 }
 

@@ -10,17 +10,25 @@ import {
   toneHz,
 } from "@/lib/morse/bands";
 import { MorseDecoder } from "@/lib/morse/decoder";
+import { MORSE } from "@/lib/morse/alphabet";
 import { getRadio } from "@/lib/morse/audio";
 import { HAPTIC } from "@/lib/morse/haptics";
-import type { PeerInfo } from "@/lib/multiplayer";
+import type { EtherPeer } from "@/lib/multiplayer/ether";
 import { CodeCard } from "./CodeCard";
 import { Knob } from "./Knob";
 import { NetSession } from "./NetSession";
 import { StraightKey } from "./StraightKey";
 
-const CALL_KEY = "nightwatch.callsign";
-const SETTINGS_KEY = "nightwatch.settings";
 const TAPE_MAX = 72;
+
+interface RadioSetProps {
+  rig?: string;
+  compact?: boolean;
+  armed?: boolean;
+  split?: boolean;
+  onArm?: () => void;
+  onToggleSplit?: () => void;
+}
 
 interface Settings {
   band: number;
@@ -39,9 +47,17 @@ function randomCall(): string {
   return `${L()}${Math.floor(Math.random() * 10)}${L()}${L()}${L()}`;
 }
 
-function loadSettings(): Settings {
+function storageKeys(rig: string) {
+  const suffix = rig === "a" ? "" : `.${rig}`;
+  return {
+    call: `nightwatch.callsign${suffix}`,
+    settings: `nightwatch.settings${suffix}`,
+  };
+}
+
+function loadSettings(key: string): Settings {
   try {
-    const raw = localStorage.getItem(SETTINGS_KEY);
+    const raw = localStorage.getItem(key);
     if (!raw) throw new Error("none");
     const parsed = JSON.parse(raw) as Partial<Settings>;
     return {
@@ -65,7 +81,14 @@ function appendTape(prev: string, ch: string) {
   return next;
 }
 
-export function RadioSet() {
+export function RadioSet({
+  rig = "a",
+  compact = false,
+  armed = true,
+  split = false,
+  onArm,
+  onToggleSplit,
+}: RadioSetProps) {
   const [hydrated, setHydrated] = useState(false);
   const [powered, setPowered] = useState(false);
   const [warming, setWarming] = useState(false);
@@ -80,17 +103,20 @@ export function RadioSet() {
   const [rxTape, setRxTape] = useState("");
   const [txPending, setTxPending] = useState("");
   const [codeOpen, setCodeOpen] = useState(false);
-  const [peers, setPeers] = useState<PeerInfo[]>([]);
+  const [peers, setPeers] = useState<EtherPeer[]>([]);
   const [occupancy, setOccupancy] = useState<Occupancy[]>([]);
   const [receiving, setReceiving] = useState(false);
   const [sMeter, setSMeter] = useState(0);
+  const [skyUp, setSkyUp] = useState(false);
 
-  const radioRef = useRef(getRadio());
+  const keys = storageKeys(rig);
+  const radioRef = useRef(getRadio(rig));
   const localDecoder = useRef<MorseDecoder | null>(null);
   const remoteDecoders = useRef(new Map<string, MorseDecoder>());
   const remoteKeyed = useRef(new Map<string, number>());
   const keyedRef = useRef(false);
   const spaceHeld = useRef(false);
+  const cqBusy = useRef(false);
 
   const khz = freqKhz(band, tune);
   const room = roomIdFor(khz);
@@ -98,25 +124,25 @@ export function RadioSet() {
   const bandName = BANDS[band]?.name ?? "40m";
 
   useEffect(() => {
-    const savedCall = localStorage.getItem(CALL_KEY);
+    const savedCall = localStorage.getItem(keys.call);
     setCallsign(savedCall && savedCall.length >= 3 ? savedCall : randomCall());
-    const settings = loadSettings();
+    const settings = loadSettings(keys.settings);
     setBand(settings.band);
     setTune(settings.tune);
     setVol(settings.vol);
     setTone(settings.tone);
     setHydrated(true);
-  }, []);
+  }, [keys.call, keys.settings]);
 
   useEffect(() => {
     if (!hydrated) return;
-    localStorage.setItem(SETTINGS_KEY, JSON.stringify({ band, tune, vol, tone }));
-  }, [band, tune, vol, tone, hydrated]);
+    localStorage.setItem(keys.settings, JSON.stringify({ band, tune, vol, tone }));
+  }, [band, tune, vol, tone, hydrated, keys.settings]);
 
   useEffect(() => {
     if (!hydrated) return;
-    localStorage.setItem(CALL_KEY, callsign);
-  }, [callsign, hydrated]);
+    localStorage.setItem(keys.call, callsign);
+  }, [callsign, hydrated, keys.call]);
 
   useEffect(() => {
     localDecoder.current = new MorseDecoder((ch) => setTxTape((prev) => appendTape(prev, ch)));
@@ -210,6 +236,7 @@ export function RadioSet() {
 
   useEffect(() => {
     const down = (event: KeyboardEvent) => {
+      if (!armed) return;
       if (event.code !== "Space" && event.key !== " ") return;
       if (event.repeat) return;
       const tag = (event.target as HTMLElement | null)?.tagName;
@@ -233,9 +260,34 @@ export function RadioSet() {
       window.removeEventListener("keyup", up);
       window.removeEventListener("blur", keyUp);
     };
-  }, [keyDown, keyUp]);
+  }, [keyDown, keyUp, armed]);
 
-  const onPeers = useCallback((next: PeerInfo[]) => setPeers(next), []);
+  const sendCq = useCallback(async () => {
+    if (!powered || cqBusy.current) return;
+    onArm?.();
+    cqBusy.current = true;
+    const unit = 90;
+    const sleep = (ms: number) => new Promise((r) => window.setTimeout(r, ms));
+    const element = async (sym: string) => {
+      keyDown();
+      await sleep(sym === "." ? unit : unit * 3);
+      keyUp();
+      await sleep(unit);
+    };
+    try {
+      for (const ch of "CQ") {
+        const code = MORSE[ch] ?? "";
+        for (const sym of code) await element(sym);
+        await sleep(unit * 2);
+      }
+    } finally {
+      keyUp();
+      cqBusy.current = false;
+    }
+  }, [keyDown, keyUp, onArm, powered]);
+
+  const onPeers = useCallback((next: EtherPeer[]) => setPeers(next), []);
+  const onSky = useCallback((up: boolean) => setSkyUp(up), []);
 
   const onRemoteKey = useCallback((from: string, name: string, down: boolean) => {
     const radio = radioRef.current;
@@ -336,14 +388,13 @@ export function RadioSet() {
     return occupied.has(f);
   });
 
-  const others = peers.filter((p) => p.connectionState === "connected");
-  const linking = peers.some((p) => p.connectionState !== "connected" && p.connectionState !== "failed");
+  const others = peers;
   const netLabel = !powered
     ? "STANDBY"
     : others.length
       ? `${others.length} ON FREQ`
-      : linking
-        ? "NETTING"
+      : skyUp
+        ? "SKY OPEN"
         : "CLEAR";
 
   const onBand = (v: number) => {
@@ -376,19 +427,25 @@ export function RadioSet() {
   };
 
   return (
-    <div className="bench">
-      <div className={`radio ${powered ? "is-on" : "is-off"} ${warming ? "is-warming" : ""}`}>
-        {powered && hydrated ? (
-          <NetSession
-            key={`${room}:${callsign}`}
-            room={room}
-            name={callsign}
-            keyed={keyed}
-            onPeers={onPeers}
-            onRemoteKey={onRemoteKey}
-            onRemoteGone={onRemoteGone}
-          />
-        ) : null}
+    <div
+      className={`radio ${powered ? "is-on" : "is-off"} ${warming ? "is-warming" : ""} ${compact ? "is-compact" : ""} ${armed ? "is-armed" : ""}`}
+      onPointerDown={() => {
+        onArm?.();
+        if (powered) radioRef.current.resume();
+      }}
+    >
+      {powered && hydrated ? (
+        <NetSession
+          key={`${room}:${callsign}`}
+          room={room}
+          name={callsign}
+          keyed={keyed}
+          onPeers={onPeers}
+          onRemoteKey={onRemoteKey}
+          onRemoteGone={onRemoteGone}
+          onSky={onSky}
+        />
+      ) : null}
 
         <header className="radio-head">
           <div className="wordmark">
@@ -427,7 +484,7 @@ export function RadioSet() {
           </div>
         </header>
 
-        <section className="crt" aria-live="polite">
+        <section className={`crt ${receiving ? "is-rx" : ""}`} aria-live="polite">
           <div className="crt-glass">
             <p className="crt-freq">
               <span>{mhz}</span>
@@ -448,6 +505,7 @@ export function RadioSet() {
             <span className={`jewel jewel-tx ${keyed ? "is-on" : ""}`}>TX</span>
             <span className={`jewel jewel-rx ${receiving ? "is-on" : ""}`}>RX</span>
             <span className={`jewel jewel-net ${others.length ? "is-on" : ""}`}>NET</span>
+            <span className={`jewel jewel-sky ${skyUp ? "is-on" : ""}`}>SKY</span>
           </div>
         </section>
 
@@ -519,15 +577,31 @@ export function RadioSet() {
           <button type="button" className="plate-btn" onClick={() => setCodeOpen((o) => !o)}>
             {codeOpen ? "HIDE CARD" : "CODE CARD"}
           </button>
+          <button
+            type="button"
+            className="plate-btn"
+            disabled={!powered}
+            onClick={() => void sendCq()}
+          >
+            CQ
+          </button>
+          {onToggleSplit ? (
+            <button type="button" className="plate-btn" onClick={onToggleSplit}>
+              {split ? "ONE SET" : "SPLIT"}
+            </button>
+          ) : null}
           <p className="peer-line">
             {others.length
               ? others.map((p) => p.name).join(" · ")
-              : powered
-                ? "Practice locally, or wait for another key on this frequency"
-                : "Flip power. Pick a frequency. Key the lever."}
+              : split
+                ? powered
+                  ? "Power both. Tap CQ on one."
+                  : "Flip PWR on this set"
+                : powered
+                  ? `Solo on ${mhz} — tap SPLIT to hear it`
+                  : "Flip power. Pick a frequency. Key the lever."}
           </p>
         </footer>
-      </div>
     </div>
   );
 }

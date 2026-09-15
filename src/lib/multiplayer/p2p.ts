@@ -29,6 +29,14 @@ export interface SignalRow {
 export interface RtcPollResponse {
   peers: PeerRow[];
   signals: SignalRow[];
+  marks?: Array<{
+    id: number;
+    from: string;
+    name: string;
+    down: boolean;
+    hold: boolean;
+    dur: number;
+  }>;
 }
 
 export interface PeerInfo {

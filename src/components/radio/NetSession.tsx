@@ -1,18 +1,15 @@
 import { useEffect, useRef } from "react";
-import { useP2PRoom, type PeerInfo } from "@/lib/multiplayer";
-
-export type KeyWire = { t: "key"; down: boolean } | { t: "hold" };
+import { HOLD_MS, useEther, type EtherPeer, type KeyWire } from "@/lib/multiplayer/ether";
 
 interface NetSessionProps {
   room: string;
   name: string;
   keyed: boolean;
-  onPeers: (peers: PeerInfo[]) => void;
+  onPeers: (peers: EtherPeer[]) => void;
   onRemoteKey: (from: string, name: string, down: boolean) => void;
   onRemoteGone: (from: string) => void;
+  onSky: (up: boolean) => void;
 }
-
-const HOLD_MS = 180;
 
 export function NetSession({
   room,
@@ -21,22 +18,29 @@ export function NetSession({
   onPeers,
   onRemoteKey,
   onRemoteGone,
+  onSky,
 }: NetSessionProps) {
-  const p2p = useP2PRoom({ room, name });
+  const ether = useEther({ room, name });
   const keyedRef = useRef(keyed);
   keyedRef.current = keyed;
-  const peersRef = useRef(p2p.peers);
-  peersRef.current = p2p.peers;
+  const downAt = useRef(0);
+  const everKeyed = useRef(false);
   const seen = useRef(new Set<string>());
+  const pendingUp = useRef(new Map<string, number>());
+  const lastDownAt = useRef(new Map<string, number>());
 
   useEffect(() => {
-    onPeers(p2p.peers);
-    const live = new Set(p2p.peers.map((p) => p.id));
+    onSky(ether.skyUp);
+  }, [ether.skyUp, onSky]);
+
+  useEffect(() => {
+    onPeers(ether.peers);
+    const live = new Set(ether.peers.map((p) => p.id));
     for (const id of seen.current) {
       if (!live.has(id)) onRemoteGone(id);
     }
     seen.current = live;
-  }, [onPeers, onRemoteGone, p2p.peers]);
+  }, [onPeers, onRemoteGone, ether.peers]);
 
   useEffect(() => {
     return () => {
@@ -47,28 +51,65 @@ export function NetSession({
   }, [onPeers, onRemoteGone]);
 
   useEffect(() => {
-    return p2p.onMessage((from, data, channel) => {
-      if (channel !== "reliable" && channel !== "state") return;
-      const msg = data as KeyWire | null;
-      if (!msg || typeof msg !== "object") return;
-      const peer = peersRef.current.find((p) => p.id === from);
-      const call = peer?.name || from;
-      if (msg.t === "key") onRemoteKey(from, call, msg.down);
-      else if (msg.t === "hold") onRemoteKey(from, call, true);
+    return ether.onMark((mark) => {
+      const call = mark.name || mark.from;
+      const cancelUp = () => {
+        const timer = pendingUp.current.get(mark.from);
+        if (timer) {
+          window.clearTimeout(timer);
+          pendingUp.current.delete(mark.from);
+        }
+      };
+      if (mark.down) {
+        cancelUp();
+        lastDownAt.current.set(mark.from, performance.now());
+        onRemoteKey(mark.from, call, true);
+        return;
+      }
+      if (mark.hold) {
+        cancelUp();
+        onRemoteKey(mark.from, call, true);
+        return;
+      }
+      const started = lastDownAt.current.get(mark.from);
+      lastDownAt.current.delete(mark.from);
+      const age = started ? performance.now() - started : Infinity;
+      const release = () => {
+        pendingUp.current.delete(mark.from);
+        onRemoteKey(mark.from, call, false);
+      };
+      if (age < 90) {
+        const playMs = Math.min(Math.max(mark.dur, 28), 1400);
+        cancelUp();
+        const timer = window.setTimeout(release, playMs);
+        pendingUp.current.set(mark.from, timer);
+        return;
+      }
+      cancelUp();
+      release();
     });
-  }, [onRemoteKey, p2p]);
+  }, [onRemoteKey, ether.onMark]);
 
   useEffect(() => {
-    p2p.send({ t: "key", down: keyed } satisfies KeyWire);
-  }, [keyed, p2p]);
+    if (keyed) {
+      everKeyed.current = true;
+      downAt.current = performance.now();
+      ether.sendKey({ t: "key", down: true } satisfies KeyWire);
+      return;
+    }
+    if (!everKeyed.current) return;
+    const dur = downAt.current ? Math.max(0, Math.round(performance.now() - downAt.current)) : 0;
+    downAt.current = 0;
+    ether.sendKey({ t: "key", down: false, dur } satisfies KeyWire);
+  }, [keyed, ether.sendKey]);
 
   useEffect(() => {
     if (!keyed) return;
     const id = window.setInterval(() => {
-      if (keyedRef.current) p2p.broadcast({ t: "hold" } satisfies KeyWire);
+      if (keyedRef.current) ether.sendKey({ t: "hold" } satisfies KeyWire);
     }, HOLD_MS);
     return () => window.clearInterval(id);
-  }, [keyed, p2p]);
+  }, [keyed, ether.sendKey]);
 
   return null;
 }
