@@ -78,20 +78,22 @@ export class MqttBus {
   private closed = false;
   private backoff = 800;
   ready = false;
-  private readonly url: string;
+  private urlIndex = 0;
+  private readonly urls: string[];
   private readonly clientId: string;
   private readonly topic: string;
   private readonly onMessage: (text: string) => void;
   private readonly onReady: (up: boolean) => void;
 
   constructor(opts: {
-    url: string;
+    url?: string;
+    urls?: string[];
     clientId: string;
     topic: string;
     onMessage: (text: string) => void;
     onReady: (up: boolean) => void;
   }) {
-    this.url = opts.url;
+    this.urls = opts.urls?.length ? opts.urls : opts.url ? [opts.url] : [];
     this.clientId = opts.clientId.slice(0, 23);
     this.topic = opts.topic;
     this.onMessage = opts.onMessage;
@@ -138,9 +140,10 @@ export class MqttBus {
   }
 
   private open() {
-    if (this.closed) return;
+    if (this.closed || this.urls.length === 0) return;
+    const url = this.urls[this.urlIndex % this.urls.length]!;
     try {
-      const ws = new WebSocket(this.url, ["mqtt"]);
+      const ws = new WebSocket(url, ["mqtt"]);
       this.ws = ws;
       ws.binaryType = "arraybuffer";
       ws.onopen = () => {
@@ -226,6 +229,7 @@ export class MqttBus {
     this.ping = null;
     this.ws = null;
     this.buf = new Uint8Array(0);
+    this.urlIndex += 1;
     if (this.closed) return;
     const wait = this.backoff;
     this.backoff = Math.min(8_000, this.backoff * 1.6);

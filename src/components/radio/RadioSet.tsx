@@ -394,8 +394,8 @@ export function RadioSet({
     : others.length
       ? `${others.length} ON FREQ`
       : skyUp
-        ? "SKY OPEN"
-        : "CLEAR";
+        ? "WORLD"
+        : "LOCAL";
 
   const onBand = (v: number) => {
     if (v !== band) {
@@ -505,7 +505,9 @@ export function RadioSet({
             <span className={`jewel jewel-tx ${keyed ? "is-on" : ""}`}>TX</span>
             <span className={`jewel jewel-rx ${receiving ? "is-on" : ""}`}>RX</span>
             <span className={`jewel jewel-net ${others.length ? "is-on" : ""}`}>NET</span>
-            <span className={`jewel jewel-sky ${skyUp ? "is-on" : ""}`}>SKY</span>
+            <span className={`jewel jewel-sky ${skyUp ? "is-on" : ""}`} title={skyUp ? "World net up" : "World net down"}>
+              SKY
+            </span>
           </div>
         </section>
 
@@ -592,13 +594,15 @@ export function RadioSet({
           ) : null}
           <p className="peer-line">
             {others.length
-              ? others.map((p) => p.name).join(" · ")
+              ? `${others.map((p) => p.name).join(" · ")}${skyUp ? "" : " · local"}`
               : split
                 ? powered
                   ? "Power both. Tap CQ on one."
                   : "Flip PWR on this set"
                 : powered
-                  ? `Solo on ${mhz} — tap SPLIT to hear it`
+                  ? skyUp
+                    ? `World net up on ${mhz}`
+                    : "World net down — same Wi‑Fi only"
                   : "Flip power. Pick a frequency. Key the lever."}
           </p>
         </footer>

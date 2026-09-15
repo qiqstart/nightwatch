@@ -1,10 +1,11 @@
 /**
- * Frequency net. Same Nightwatch copy talks through /api/rtc; every copy on
- * the air also shares a public MQTT topic so two browsers/phones hear each
- * other even when they are not on the same server.
+ * Frequency net. Same Nightwatch copy talks through /api/rtc. Off-network
+ * copies also share a world relay (MQTT plus an HTTPS/WSS bus on port 443)
+ * so two phones on different Wi‑Fi still hear each other.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { MqttBus } from "@/lib/morse/mqtt";
+import { NtfyBus } from "@/lib/morse/ntfy";
 
 export interface EtherPeer {
   id: string;
@@ -38,8 +39,12 @@ interface SkyMsg {
 const POLL_MS = 90;
 const HOLD_MS = 180;
 const HELLO_MS = 2500;
+const RELAY_HELLO_MS = 8000;
 const PEER_TTL_MS = 8000;
-const MQTT_URL = "wss://broker.hivemq.com:8884/mqtt";
+const MQTT_URLS = [
+  "wss://broker.hivemq.com:8884/mqtt",
+  "wss://broker.emqx.io:8084/mqtt",
+];
 
 export type KeyWire = { t: "key"; down: boolean; dur?: number } | { t: "hold" };
 
@@ -59,6 +64,9 @@ export function useEther(options: { room: string; name: string }): {
   const closed = useRef(false);
   const listeners = useRef(new Set<(mark: CwMark) => void>());
   const mqttRef = useRef<MqttBus | null>(null);
+  const ntfyRef = useRef<NtfyBus | null>(null);
+  const mqttUp = useRef(false);
+  const ntfyUp = useRef(false);
   const localPeers = useRef<EtherPeer[]>([]);
   const skyPeers = useRef(new Map<string, { name: string; at: number }>());
   const seenMid = useRef(new Set<string>());
@@ -129,55 +137,80 @@ export function useEther(options: { room: string; name: string }): {
     [name, room, selfId],
   );
 
-  const sendSky = useCallback((msg: SkyMsg) => {
-    const bus = mqttRef.current;
-    if (!bus?.ready) return false;
-    return bus.send(JSON.stringify(msg));
+  const sendSky = useCallback((msg: SkyMsg, via: "all" | "mqtt" | "relay" = "all") => {
+    const body = JSON.stringify(msg);
+    if (via !== "relay") mqttRef.current?.send(body);
+    if (via !== "mqtt") ntfyRef.current?.send(body);
   }, []);
+
+  const bumpSky = useCallback(() => {
+    setSkyUp(mqttUp.current || ntfyUp.current);
+  }, []);
+
+  const onSkyText = useCallback(
+    (text: string) => {
+      let msg: SkyMsg;
+      try {
+        msg = JSON.parse(text) as SkyMsg;
+      } catch {
+        return;
+      }
+      if (!msg || msg.from === selfId) return;
+      if (msg.t === "hello") {
+        skyPeers.current.set(msg.from, { name: msg.name || msg.from, at: Date.now() });
+        emitPeers();
+        return;
+      }
+      if (msg.t === "cw") {
+        ingest(
+          {
+            id: seq.current++,
+            from: msg.from,
+            name: msg.name || msg.from,
+            down: Boolean(msg.down),
+            hold: Boolean(msg.hold),
+            dur: Number(msg.dur) || 0,
+          },
+          msg.mid,
+        );
+      }
+    },
+    [emitPeers, ingest, selfId],
+  );
 
   useEffect(() => {
     closed.current = false;
+    mqttUp.current = false;
+    ntfyUp.current = false;
+    setSkyUp(false);
     let timer: ReturnType<typeof setTimeout> | null = null;
     let helloTimer: ReturnType<typeof setInterval> | null = null;
+    let relayHello: ReturnType<typeof setInterval> | null = null;
 
-    const bus = new MqttBus({
-      url: MQTT_URL,
+    const mqtt = new MqttBus({
+      urls: MQTT_URLS,
       clientId: selfId,
       topic: `nightwatch/cw/${room}`,
       onReady: (up) => {
-        setSkyUp(up);
-        if (up) sendSky({ t: "hello", from: selfId, name });
+        mqttUp.current = up;
+        bumpSky();
+        if (up) sendSky({ t: "hello", from: selfId, name }, "mqtt");
       },
-      onMessage: (text) => {
-        let msg: SkyMsg;
-        try {
-          msg = JSON.parse(text) as SkyMsg;
-        } catch {
-          return;
-        }
-        if (!msg || msg.from === selfId) return;
-        if (msg.t === "hello") {
-          skyPeers.current.set(msg.from, { name: msg.name || msg.from, at: Date.now() });
-          emitPeers();
-          return;
-        }
-        if (msg.t === "cw") {
-          ingest(
-            {
-              id: seq.current++,
-              from: msg.from,
-              name: msg.name || msg.from,
-              down: Boolean(msg.down),
-              hold: Boolean(msg.hold),
-              dur: Number(msg.dur) || 0,
-            },
-            msg.mid,
-          );
-        }
-      },
+      onMessage: onSkyText,
     });
-    mqttRef.current = bus;
-    bus.start();
+    const ntfy = new NtfyBus({
+      topic: `nightwatch-cw-${room}`,
+      onReady: (up) => {
+        ntfyUp.current = up;
+        bumpSky();
+        if (up) sendSky({ t: "hello", from: selfId, name }, "relay");
+      },
+      onMessage: onSkyText,
+    });
+    mqttRef.current = mqtt;
+    ntfyRef.current = ntfy;
+    mqtt.start();
+    ntfy.start();
 
     const poll = async () => {
       if (closed.current) return;
@@ -208,16 +241,22 @@ export function useEther(options: { room: string; name: string }): {
 
     void poll();
     helloTimer = setInterval(() => {
-      sendSky({ t: "hello", from: selfId, name });
+      sendSky({ t: "hello", from: selfId, name }, "mqtt");
       emitPeers();
     }, HELLO_MS);
+    relayHello = setInterval(() => {
+      sendSky({ t: "hello", from: selfId, name }, "relay");
+    }, RELAY_HELLO_MS);
 
     return () => {
       closed.current = true;
       if (timer) clearTimeout(timer);
       if (helloTimer) clearInterval(helloTimer);
-      bus.stop();
+      if (relayHello) clearInterval(relayHello);
+      mqtt.stop();
+      ntfy.stop();
       mqttRef.current = null;
+      ntfyRef.current = null;
       void fetch("/api/rtc", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -225,7 +264,7 @@ export function useEther(options: { room: string; name: string }): {
         keepalive: true,
       }).catch(() => {});
     };
-  }, [emitPeers, ingest, name, room, selfId, sendSky]);
+  }, [bumpSky, emitPeers, ingest, name, onSkyText, room, selfId, sendSky]);
 
   const sendKey = useCallback(
     (msg: KeyWire) => {
@@ -233,15 +272,8 @@ export function useEther(options: { room: string; name: string }): {
       const hold = msg.t === "hold";
       const dur = msg.t === "key" ? (msg.dur ?? 0) : 0;
       const mid = `${selfId}-${seq.current++}`;
-      sendSky({
-        t: "cw",
-        from: selfId,
-        name,
-        down,
-        hold,
-        dur,
-        mid,
-      });
+      const sky: SkyMsg = { t: "cw", from: selfId, name, down, hold, dur, mid };
+      sendSky(sky, hold ? "mqtt" : "all");
       postCw({ down, hold, dur });
     },
     [name, postCw, selfId, sendSky],
