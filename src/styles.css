@@ -127,6 +127,12 @@
   font-size: 1.55rem;
 }
 
+.radio.is-compact .call-plate,
+.radio.is-compact .call-input {
+  min-width: 4.2rem;
+  font-size: 0.7rem;
+}
+
 .radio.is-compact .tape {
   min-height: 2.2rem;
 }
@@ -255,6 +261,56 @@
 .power-rocker.is-on i::after {
   transform: translateX(0.55rem);
   background: var(--color-phosphor);
+}
+
+.sync-plunger {
+  width: 2.6rem;
+  min-height: 2.8rem;
+  padding: 0.2rem 0;
+  border-radius: 0.4rem;
+  border: 1px solid var(--color-brass-lo);
+  background: linear-gradient(180deg, #4a3c2e, #1c1611);
+  color: var(--color-cream-dim);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.2rem;
+  font-size: 0.58rem;
+  letter-spacing: 0.14em;
+  font-weight: 700;
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.12),
+    0 1px 0 #0a0806;
+}
+
+.sync-plunger i {
+  display: block;
+  width: 0.95rem;
+  height: 0.95rem;
+  border-radius: 999px;
+  background:
+    radial-gradient(circle at 35% 30%, var(--color-brass-hi), var(--color-brass) 42%, var(--color-brass-lo));
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.35),
+    0 2px 0 #0e0b08;
+}
+
+.sync-plunger:active i {
+  transform: translateY(1px);
+  box-shadow:
+    inset 0 2px 3px rgb(0 0 0 / 0.55),
+    0 0 0 #0e0b08;
+}
+
+.sync-plunger.is-sent {
+  color: var(--color-phosphor);
+}
+
+.sync-plunger.is-sent i {
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.35),
+    0 0 8px var(--color-phosphor);
 }
 
 .crt {

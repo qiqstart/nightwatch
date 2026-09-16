@@ -6,7 +6,9 @@ import {
   TUNE_MIN,
   formatMhz,
   freqKhz,
+  parseChannelParam,
   roomIdFor,
+  syncLink,
   toneHz,
 } from "@/lib/morse/bands";
 import { MorseDecoder } from "@/lib/morse/decoder";
@@ -23,6 +25,7 @@ const TAPE_MAX = 72;
 
 interface RadioSetProps {
   rig?: string;
+  channel?: string;
   compact?: boolean;
   armed?: boolean;
   split?: boolean;
@@ -83,6 +86,7 @@ function appendTape(prev: string, ch: string) {
 
 export function RadioSet({
   rig = "a",
+  channel,
   compact = false,
   armed = true,
   split = false,
@@ -108,6 +112,7 @@ export function RadioSet({
   const [receiving, setReceiving] = useState(false);
   const [sMeter, setSMeter] = useState(0);
   const [skyUp, setSkyUp] = useState(false);
+  const [syncFlash, setSyncFlash] = useState("");
 
   const keys = storageKeys(rig);
   const radioRef = useRef(getRadio(rig));
@@ -127,12 +132,15 @@ export function RadioSet({
     const savedCall = localStorage.getItem(keys.call);
     setCallsign(savedCall && savedCall.length >= 3 ? savedCall : randomCall());
     const settings = loadSettings(keys.settings);
-    setBand(settings.band);
-    setTune(settings.tune);
+    const linked =
+      parseChannelParam(channel) ??
+      parseChannelParam(new URLSearchParams(window.location.search).get("c"));
+    setBand(linked?.band ?? settings.band);
+    setTune(linked?.tune ?? settings.tune);
     setVol(settings.vol);
     setTone(settings.tone);
     setHydrated(true);
-  }, [keys.call, keys.settings]);
+  }, [channel, keys.call, keys.settings]);
 
   useEffect(() => {
     if (!hydrated) return;
@@ -143,6 +151,14 @@ export function RadioSet({
     if (!hydrated) return;
     localStorage.setItem(keys.call, callsign);
   }, [callsign, hydrated, keys.call]);
+
+  useEffect(() => {
+    if (!hydrated || rig !== "a") return;
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("c") === String(khz)) return;
+    url.searchParams.set("c", String(khz));
+    window.history.replaceState(window.history.state, "", url);
+  }, [hydrated, khz, rig]);
 
   useEffect(() => {
     localDecoder.current = new MorseDecoder((ch) => setTxTape((prev) => appendTape(prev, ch)));
@@ -285,6 +301,45 @@ export function RadioSet({
       cqBusy.current = false;
     }
   }, [keyDown, keyUp, onArm, powered]);
+
+  const shareFreq = useCallback(async () => {
+    onArm?.();
+    HAPTIC.detent();
+    const url = syncLink(khz);
+    const flash = (msg: string) => {
+      setSyncFlash(msg);
+      window.setTimeout(() => setSyncFlash(""), 1800);
+    };
+    const payload = { title: `NIGHTWATCH ${mhz}`, text: `Meet on ${mhz} MHz CW`, url };
+    try {
+      if (typeof navigator.share === "function") {
+        await navigator.share(payload);
+        flash("SENT");
+        return;
+      }
+    } catch (err) {
+      if ((err as DOMException).name === "AbortError") return;
+    }
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(url);
+        flash("COPIED");
+        return;
+      }
+    } catch {
+      /* fall through */
+    }
+    const field = document.createElement("textarea");
+    field.value = url;
+    field.setAttribute("readonly", "");
+    field.style.position = "fixed";
+    field.style.left = "-9999px";
+    document.body.appendChild(field);
+    field.select();
+    const ok = document.execCommand("copy");
+    field.remove();
+    flash(ok ? "COPIED" : "NO LINK");
+  }, [khz, mhz, onArm]);
 
   const onPeers = useCallback((next: EtherPeer[]) => setPeers(next), []);
   const onSky = useCallback((up: boolean) => setSkyUp(up), []);
@@ -471,6 +526,15 @@ export function RadioSet({
                 {callsign}
               </button>
             )}
+            <button
+              type="button"
+              className={`sync-plunger ${syncFlash ? "is-sent" : ""}`}
+              aria-label={`Share ${mhz} MHz`}
+              onClick={() => void shareFreq()}
+            >
+              <i />
+              <span>{syncFlash || "SYNC"}</span>
+            </button>
             <button
               type="button"
               className={`power-rocker ${powered ? "is-on" : ""}`}
