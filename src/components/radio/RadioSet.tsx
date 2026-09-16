@@ -601,7 +601,7 @@ export function RadioSet({
                   : "Flip PWR on this set"
                 : powered
                   ? skyUp
-                    ? `World net up on ${mhz}`
+                    ? `World net up on ${mhz} — HTTPS`
                     : "World net down — same Wi‑Fi only"
                   : "Flip power. Pick a frequency. Key the lever."}
           </p>

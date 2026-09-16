@@ -19,9 +19,9 @@ Open the URL Vite prints. Flip **PWR**, pick a band, hold the straight key.
 - Auto-decode tape and a Morse code card
 - Callsign stored in the browser — no accounts
 
-The amber **SKY** lamp is the world net. If it is dark, you are only on this
-Nightwatch copy (typical of same-Wi‑Fi). If it is lit, the key goes out over
-HTTPS even when the other set is on another network.
+The amber **SKY** lamp is the world net (HTTPS). If it is dark, you are only
+on this Nightwatch copy (typical of same-Wi‑Fi). Voice never hits the
+switchboard — only key-up / key-down notes.
 
 ## Stack
 

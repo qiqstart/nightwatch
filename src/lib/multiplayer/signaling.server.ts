@@ -122,10 +122,21 @@ async function prune(sql: Sql) {
   ]);
 }
 
+function corsHeaders(extra?: Record<string, string>): HeadersInit {
+  return {
+    "content-type": "application/json",
+    "cache-control": "no-store",
+    "access-control-allow-origin": "*",
+    "access-control-allow-methods": "GET, POST, OPTIONS",
+    "access-control-allow-headers": "content-type",
+    ...extra,
+  };
+}
+
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { "content-type": "application/json", "cache-control": "no-store" },
+    headers: corsHeaders(),
   });
 }
 
@@ -151,6 +162,11 @@ async function handleGet(url: URL): Promise<Response> {
   const sql = await getSql();
   await ensureSchema(sql);
   if (since === 0 || cw === 0 || Math.random() < 0.02) await prune(sql);
+  const live = await roster(sql, room);
+  const already = live.some((p) => p.id === peer);
+  if (!already && live.length >= 8) {
+    return json({ error: "channel full", peers: live, signals: [], marks: [] }, 409);
+  }
   await touchPeer(sql, room, peer, name);
   const rows = await sql.query<{
     id: number;
@@ -234,6 +250,9 @@ async function handlePost(request: Request): Promise<Response> {
 
 export async function handleSignaling(request: Request): Promise<Response> {
   try {
+    if (request.method === "OPTIONS") {
+      return new Response(null, { status: 204, headers: corsHeaders() });
+    }
     if (request.method === "GET") return await handleGet(new URL(request.url));
     if (request.method === "POST") return await handlePost(request);
     return json({ error: "method not allowed" }, 405);
